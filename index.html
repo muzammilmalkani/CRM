@@ -5555,6 +5555,464 @@ const DEALS_FULL = [
 // PIPELINE DATA
 // ═══════════════════════════════════════════════════════════
 
+
+// ═══════════════════════════════════════════════════════════════
+// DEAL DETAIL — all functions
+// ═══════════════════════════════════════════════════════════════
+
+const pipelineStageMap = {
+  'Equipment Sales':       ['Enquiry','Needs Assessment','Demo / Trial','Deal Desk','Finance & Docs','PDI & Handover','Won'],
+  'Equipment Rental':      ['Enquiry','Availability Check','Pre-deployment Inspeq','Contract Active','Return Inspection','Closed'],
+  'Rental Contracts':      ['Enquiry','Availability Check','Pre-deployment Inspeq','Contract Active','Return Inspection','Closed'],
+  'Leasing':               ['Enquiry','Credit Assessment','Quote & Structure','Documentation','PDI & Delivery','Active Lease'],
+  'Inspection Services':   ['Order Intake','Inspector Dispatched','On Site','QC Review','Report Delivered'],
+  'Service & Repair':      ['Job Intake','Estimation','In Workshop','QC Inspection','Completed'],
+  'Trade-In Valuation':    ['Trade-in Request','Inspeq Inspection','Valuation Review','Offer Made','Agreed & Linked','Completed'],
+  'Auction & Remarketing': ['De-fleet Trigger','Exit Inspection','Listing Prep','Listed','Under Offer','Sold'],
+  'Fleet Maintenance':     ['Service Due','Job Intake','Estimation','In Workshop','QC Inspection','Completed'],
+};
+
+function openDealDetail(dealId) {
+  const deal = DEALS_FULL.find(d => d.id === dealId) || DEALS_FULL[0];
+  window._currentDealId = dealId;
+
+  // Header
+  document.getElementById('dd-name').textContent = deal.name;
+  document.getElementById('dd-meta').textContent =
+    deal.type + ' · ' + deal.pipeline + ' · Owner: ' + deal.owner + ' · Created: ' + deal.created;
+
+  const typeTag = {
+    'New Machine Sale':'tag-sale','Used Machine Sale':'tag-sale',
+    'Rental Contract':'tag-rental','Finance Lease':'tag-lease',
+    'Operating Lease':'tag-lease','Auction Consignment':'tag-auction',
+    'Trade-In Valuation':'tag-rental','Fleet Maintenance':'tag-auction',
+  }[deal.type] || 'tag-sale';
+
+  document.getElementById('dd-badges').innerHTML =
+    `<span class="tag ${typeTag}" style="font-size:11.5px">${deal.type}</span>` +
+    `<span class="health-badge ${deal.health==='on-track'?'health-on-track':deal.health==='critical'?'health-critical':'health-at-risk'}" style="font-size:11.5px"><span class="dot"></span>${deal.health==='on-track'?'On Track':deal.health==='critical'?'Critical':'At Risk'}</span>` +
+    (deal.approvalStatus==='Pending approval'?`<span style="font-size:11.5px;padding:3px 10px;border-radius:20px;background:var(--amber-bg);color:var(--amber);font-weight:600">⏳ Approval Pending</span>`:'');
+
+  // Stage progress bar
+  const stages = pipelineStageMap[deal.pipeline] || pipelineStageMap['Equipment Sales'];
+  const si = deal.stageIndex;
+  document.getElementById('dd-stage-bar').innerHTML = `
+    <div style="display:flex;align-items:center;padding:14px 0 12px;gap:0;min-width:max-content">
+      ${stages.map((s,i) => {
+        const done = i < si, active = i === si, isLast = i === stages.length-1;
+        const col = done?'var(--accent2)':active?'var(--accent)':'var(--border2)';
+        const textCol = done||active?'var(--text)':'var(--text3)';
+        return `<div style="display:flex;align-items:center;gap:0">
+          <div style="display:flex;flex-direction:column;align-items:center;gap:4px;cursor:pointer;padding:0 6px" onclick="advanceDealToStage('${dealId}',${i})">
+            <div style="width:26px;height:26px;border-radius:50%;background:${done?'var(--accent2)':active?'var(--accent)':'var(--surface)'};border:2px solid ${col};display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:700;color:${done||active?'#fff':col};transition:all .2s">${done?'✓':i+1}</div>
+            <div style="font-size:11px;font-weight:${active?600:400};color:${textCol};white-space:nowrap;max-width:80px;text-align:center;line-height:1.3">${s}</div>
+          </div>
+          ${!isLast?`<div style="width:28px;height:2px;background:${done?'var(--accent2)':'var(--border)'};margin-bottom:18px;flex-shrink:0;transition:background .2s"></div>`:''}
+        </div>`;
+      }).join('')}
+    </div>`;
+
+  // KPIs
+  const netVal = deal.dealValue - (deal.tradeInAllowance||0);
+  const marginColor = deal.grossMargin < 18 ? 'var(--red)' : deal.grossMargin < 20 ? 'var(--amber)' : 'var(--accent2)';
+  document.getElementById('dd-kpi-row').innerHTML = [
+    {l:'Deal Value',v:'$'+deal.dealValue.toLocaleString(),sub:deal.type,col:'var(--text)'},
+    {l:'Net Value',v:'$'+netVal.toLocaleString(),sub:deal.tradeInAllowance?'After trade-in':'Gross',col:'var(--accent2)'},
+    {l:'Gross Margin',v:deal.grossMargin+'%',sub:deal.grossMargin<20?'⚠ Below threshold':'✓ Above target',col:marginColor},
+    {l:'Probability',v:deal.probability+'%',sub:'Expected close: '+deal.close,col:'var(--blue)'},
+  ].map(k=>`<div class="kpi-card"><div class="kpi-label">${k.l}</div><div class="kpi-value" style="font-size:22px;color:${k.col}">${k.v}</div><div class="kpi-sub">${k.sub}</div></div>`).join('');
+
+  // About grid
+  const aboutFields = [
+    ['Pipeline',deal.pipeline],['Account',deal.accountName],['Owner',deal.owner],
+    ['Created',deal.created],['Expected Close',deal.close],['Territory',deal.territory],
+    ['Application',deal.application],['Approval Status',deal.approvalStatus],['Probability',deal.probability+'%'],
+  ];
+  document.getElementById('dd-about-grid').innerHTML = aboutFields.map(([k,v])=>`
+    <div>
+      <div style="font-size:10.5px;font-weight:500;color:var(--text3);text-transform:uppercase;letter-spacing:0.04em;margin-bottom:3px">${k}</div>
+      <div style="font-size:13px;color:${v==='Pending approval'?'var(--amber)':v==='Not required'?'var(--accent2)':'var(--text)'}">
+        ${v==='Pending approval'?'⏳ '+v:v==='Not required'?'✓ '+v:v}
+      </div>
+    </div>`).join('');
+  if(deal.notes) {
+    document.getElementById('dd-about-grid').innerHTML += `
+      <div style="grid-column:1/-1">
+        <div style="font-size:10.5px;font-weight:500;color:var(--text3);text-transform:uppercase;letter-spacing:0.04em;margin-bottom:5px">Notes</div>
+        <div style="font-size:13px;color:var(--text2);background:var(--surface2);border:1px solid var(--border);border-radius:var(--radius);padding:10px 14px;line-height:1.7">${deal.notes}</div>
+      </div>`;
+  }
+
+  // Machines
+  document.getElementById('dd-machines-body').innerHTML = deal.machines.map(m => {
+    const isTradeIn = m.type.toLowerCase().includes('trade');
+    return `<div style="border:1px solid var(--border);border-radius:var(--radius-lg);overflow:hidden">
+      <div style="padding:13px 16px;display:flex;gap:12px;align-items:flex-start">
+        <div style="width:44px;height:44px;background:${isTradeIn?'var(--amber-bg)':'var(--accent-bg)'};border-radius:var(--radius);display:flex;align-items:center;justify-content:center;flex-shrink:0;color:${isTradeIn?'var(--amber)':'var(--accent)'}">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M3 17h18M5 17V9l3-3h8l3 3v8"/><circle cx="7" cy="20" r="2"/><circle cx="17" cy="20" r="2"/></svg>
+        </div>
+        <div style="flex:1">
+          <div style="display:flex;align-items:center;gap:8px;margin-bottom:3px">
+            <div style="font-weight:500;font-size:14px">${m.name}</div>
+            <span style="font-size:11px;padding:2px 8px;border-radius:20px;background:${isTradeIn?'var(--amber-bg)':'var(--accent-bg)'};color:${isTradeIn?'var(--amber)':'var(--accent)'};">${m.type}</span>
+          </div>
+          <div style="font-size:12px;color:var(--text3);font-family:'DM Mono',monospace;margin-bottom:6px">${m.pin} · ${m.hours?m.hours.toLocaleString()+'h · Grade '+m.condition:'New — 0h'}</div>
+          <span class="inspeq-status ${m.inspeq==='current'?'inspeq-current':m.inspeq==='pending'?'inspeq-pending':'inspeq-overdue'}" style="font-size:11px">${m.inspeq==='current'?'✓ Inspeq Current':m.inspeq==='pending'?'⏳ Pending':'⚠ Overdue'}</span>
+        </div>
+        <div style="text-align:right;flex-shrink:0">
+          <div style="font-size:16px;font-weight:700;font-family:'DM Mono',monospace;color:${isTradeIn?'var(--amber)':'var(--text)'}">${isTradeIn?'('+Math.abs(m.price).toLocaleString()+')':'$'+m.price.toLocaleString()}</div>
+          <div style="font-size:11px;color:var(--text3)">${isTradeIn?'Trade-in allowance':'Sale price'}</div>
+          <button class="btn" style="height:24px;font-size:11px;padding:0 8px;margin-top:6px" onclick="event.stopPropagation();openMachineDetail('${m.pin}')">View →</button>
+        </div>
+      </div>
+    </div>`;
+  }).join('');
+
+  // Financials
+  const margin_pct = deal.grossMargin;
+  document.getElementById('dd-financials-body').innerHTML = `
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:20px">
+      <div><div style="display:flex;flex-direction:column;gap:10px;font-size:13px">
+        ${[
+          ['Total Deal Value','$'+deal.dealValue.toLocaleString(),'var(--text)'],
+          ['Trade-in Allowance',deal.tradeInAllowance?'($'+deal.tradeInAllowance.toLocaleString()+')':'—','var(--amber)'],
+          ['Net Deal Value','$'+(deal.dealValue-deal.tradeInAllowance).toLocaleString(),'var(--text)'],
+          ['Cost of Goods','$'+deal.cogs.toLocaleString(),'var(--text2)'],
+          ['Gross Margin','$'+(deal.dealValue-deal.tradeInAllowance-deal.cogs).toLocaleString()+' ('+deal.grossMargin+'%)',marginColor],
+        ].map(([k,v,c])=>`<div style="display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px solid var(--border)">
+          <span style="color:var(--text2)">${k}</span><span style="font-family:'DM Mono',monospace;font-weight:600;color:${c}">${v}</span>
+        </div>`).join('')}
+      </div></div>
+      <div>
+        <div style="margin-bottom:14px">
+          <div style="font-size:11px;font-weight:500;color:var(--text3);text-transform:uppercase;letter-spacing:0.05em;margin-bottom:8px">Margin vs Target (20%)</div>
+          <div style="height:10px;background:var(--bg);border-radius:6px;overflow:hidden;margin-bottom:5px">
+            <div style="height:10px;border-radius:6px;background:${marginColor};width:${Math.min(100,margin_pct/40*100)}%;transition:width .4s"></div>
+          </div>
+          <div style="display:flex;justify-content:space-between;font-size:11px;color:var(--text3)"><span>${margin_pct}% actual</span><span>20% target</span></div>
+          ${margin_pct<20?`<div style="margin-top:8px;padding:8px 10px;background:var(--amber-bg);border-radius:6px;font-size:12px;color:var(--amber)">⚠ ${(20-margin_pct).toFixed(1)}% below threshold — approval required</div>`:''}
+        </div>
+        <div style="background:var(--surface2);border:1px solid var(--border);border-radius:var(--radius);padding:12px;font-size:12.5px">
+          <div style="font-weight:600;margin-bottom:8px">Financing</div>
+          ${[
+            ['Structure',deal.financing],
+            deal.term?['Term',deal.term+'mo']:null,
+            deal.rate?['Rate',deal.rate+'% p.a.']:null,
+            deal.deposit?['Deposit','$'+deal.deposit.toLocaleString()]:null,
+          ].filter(Boolean).map(([k,v])=>`<div style="display:flex;justify-content:space-between;padding:4px 0;font-size:12.5px"><span style="color:var(--text3)">${k}</span><span style="font-weight:500">${v}</span></div>`).join('')}
+        </div>
+      </div>
+    </div>`;
+
+  // Activity feed (mini)
+  const acts = (ACTIVITY_LOG[deal.account]||ACTIVITY_LOG.A1);
+  const actTypeColor={call:'#2C7A4B',email:'#185FA5',inspeq:'#6B3B9A',deal:'#9D4A00',visit:'#8B5A00',note:'#5f5e5a',job:'#093B26',marketplace:'#185FA5'};
+  const actTypeBg={call:'#E8F5EE',email:'#E6F1FB',inspeq:'#EEEDFE',deal:'#FEF3E2',visit:'#FEF3E2',note:'#F1EFE8',job:'#E1F5EE',marketplace:'#E6F1FB'};
+  const actTypeLabel={call:'Call',email:'Email',inspeq:'Inspeq',deal:'Deal Update',visit:'Visit',note:'Note',job:'Service Job',marketplace:'Marketplace'};
+  document.getElementById('dd-activity-body').innerHTML = acts.slice(0,6).map((a,i)=>`
+    <div style="display:flex;gap:11px;padding:10px 0;${i<5?'border-bottom:1px solid var(--border)':''}">
+      <div style="width:28px;height:28px;border-radius:50%;background:${actTypeBg[a.type]||'var(--bg)'};display:flex;align-items:center;justify-content:center;font-size:13px;border:1px solid var(--border);flex-shrink:0">${a.icon}</div>
+      <div style="flex:1">
+        <div style="display:flex;align-items:baseline;gap:7px;margin-bottom:2px">
+          <span style="font-size:11px;font-weight:600;padding:1px 7px;border-radius:20px;background:${actTypeBg[a.type]||'var(--bg)'};color:${actTypeColor[a.type]||'var(--text3)'}">${actTypeLabel[a.type]||a.type}</span>
+          <span style="font-size:11px;color:var(--text3)">${a.time}</span>
+        </div>
+        <div style="font-size:13px;color:var(--text);line-height:1.5">${a.text}</div>
+      </div>
+    </div>`).join('');
+
+  // Account card
+  const acct = ACCOUNTS.find(a => a.id===deal.account)||{};
+  document.getElementById('dd-account-card').innerHTML = `
+    <div style="display:flex;align-items:center;gap:9px;cursor:pointer;margin-bottom:8px" onclick="openAccountDetail('${deal.account}')">
+      <div style="width:32px;height:32px;border-radius:50%;background:var(--accent-bg);display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:700;color:var(--accent)">${(acct.name||deal.accountName).split(' ').slice(0,2).map(w=>w[0]).join('')}</div>
+      <div><div style="font-weight:600;font-size:13.5px;color:var(--blue)">${deal.accountName}</div><div style="font-size:12px;color:var(--text3)">${acct.industry||''}</div></div>
+    </div>
+    <div style="font-size:12px;color:var(--text2)">${acct.address||''}</div>`;
+
+  // Contacts
+  const dealContacts = CONTACTS.filter(c => deal.contacts.includes(c.id));
+  document.getElementById('dd-contacts-card').innerHTML = dealContacts.map(c=>`
+    <div style="display:flex;align-items:center;gap:8px;padding:7px 9px;border:1px solid var(--border);border-radius:var(--radius);cursor:pointer" onclick="openContactDetail('${c.id}')">
+      <div style="width:28px;height:28px;border-radius:50%;background:var(--bg);border:1px solid var(--border);display:flex;align-items:center;justify-content:center;font-size:10px;font-weight:700;color:var(--text2);flex-shrink:0">${c.firstName[0]}${c.lastName[0]}</div>
+      <div style="flex:1"><div style="font-size:12.5px;font-weight:500">${c.firstName} ${c.lastName}</div><div style="font-size:11px;color:var(--text3)">${c.title}</div></div>
+      <span style="font-size:10.5px;padding:2px 6px;border-radius:20px;background:var(--bg);border:1px solid var(--border);color:var(--text3)">${c.role}</span>
+    </div>`).join('') || '<div style="font-size:12.5px;color:var(--text3);padding:4px">No contacts linked.</div>';
+
+  // Document checklist
+  const statusIcon = {done:'<span style="color:var(--accent2);font-size:12px">✓</span>',pending:'<span style="width:14px;height:14px;border:1.5px solid var(--border2);border-radius:4px;display:inline-block"></span>',partial:'<span style="color:var(--amber);font-size:12px">◐</span>'};
+  document.getElementById('dd-docs-mini').innerHTML = deal.docs.map(d=>`
+    <div style="display:flex;align-items:center;gap:7px;padding:6px 8px;border:1px solid var(--border);border-radius:var(--radius);background:var(--surface);font-size:12px">
+      ${statusIcon[d.status]||statusIcon.pending}
+      <span style="color:${d.status==='done'?'var(--text2)':d.status==='partial'?'var(--amber)':'var(--text3)'}">${d.name}</span>
+    </div>`).join('');
+
+  // Workflow context cards
+  const wfColors={info:'var(--accent2)',warn:'var(--amber)',danger:'var(--red)'};
+  const wfBgs={info:'#E8F5EE',warn:'var(--amber-bg)',danger:'var(--red-bg)'};
+  document.getElementById('dd-workflow-card').innerHTML = deal.workflow.map(w=>`
+    <div style="background:${wfBgs[w.type]||'var(--bg)'};border-radius:6px;padding:10px 12px;border-left:3px solid ${wfColors[w.type]||'var(--border)'}">
+      <div style="font-size:12px;font-weight:600;color:${wfColors[w.type]||'var(--text)'};margin-bottom:3px">${w.title}</div>
+      <div style="font-size:12px;color:var(--text2);line-height:1.5">${w.body}</div>
+    </div>`).join('');
+
+  // Tasks
+  document.getElementById('dd-tasks-mini').innerHTML = deal.tasks.map(t=>`
+    <div style="display:flex;align-items:center;gap:7px;padding:7px 9px;border:1px solid var(--border);border-radius:var(--radius);background:var(--surface)">
+      <input type="checkbox" style="width:12px;height:12px;accent-color:var(--accent)">
+      <div style="flex:1"><div style="font-size:12px;font-weight:500;line-height:1.4">${t.title}</div><div style="font-size:11px;color:${t.priority==='urgent'?'var(--red)':t.priority==='high'?'var(--amber)':'var(--text3)'}">${t.due} · ${t.priority}</div></div>
+    </div>`).join('');
+
+  // Stage advance button
+  document.getElementById('dd-stage-advance-btn').textContent = si < stages.length-1 ? '→ ' + stages[si+1] : 'Final Stage';
+  document.getElementById('dd-stage-advance-btn').disabled = !(si < stages.length-1);
+  document.getElementById('dd-stage-advance-btn').onclick = () => {
+    if(si < stages.length-1) { const d=DEALS_FULL.find(x=>x.id===dealId); d.stageIndex=si+1; d.stage=stages[si+1]; openDealDetail(dealId); }
+  };
+
+  // Navigate
+  document.querySelectorAll('.page').forEach(p=>p.classList.remove('active'));
+  document.getElementById('page-deal-detail').classList.add('active');
+  document.querySelectorAll('.topnav-link,.topnav-dropdown-item').forEach(n=>n.classList.remove('active'));
+  document.querySelectorAll('.topnav-dropdown-item').forEach(n=>{ if(n.getAttribute('data-page')==='deals') n.classList.add('active'); });
+  document.querySelector('#tng-sales .topnav-group-btn')?.classList.add('active');
+  updateSubnav(['Sales','Deals','Deal Detail'], 'deal-detail');
+  ddTab('overview', document.querySelector('#dd-tabs .tab'));
+}
+
+function advanceDealToStage(dealId, stageIdx) {
+  const deal = DEALS_FULL.find(d=>d.id===dealId);
+  if(!deal) return;
+  const stages = pipelineStageMap[deal.pipeline]||pipelineStageMap['Equipment Sales'];
+  if(stageIdx >= 0 && stageIdx < stages.length) { deal.stageIndex=stageIdx; deal.stage=stages[stageIdx]; openDealDetail(dealId); }
+}
+
+function ddTab(tab, el) {
+  ['overview','machines','financials','activity','docs','approvals'].forEach(t=>{
+    const e=document.getElementById('dd-'+t); if(e) e.style.display='none';
+  });
+  const show=document.getElementById('dd-'+tab);
+  if(show) show.style.display = tab==='overview'?'flex':'block';
+  document.querySelectorAll('#dd-tabs .tab').forEach(t=>t.classList.remove('active'));
+  if(el) el.classList.add('active');
+  const id=window._currentDealId||'D1';
+  if(tab==='activity')   renderDealFullActivity(id);
+  if(tab==='docs')       renderDealDocs(id);
+  if(tab==='approvals')  renderDealApprovals(id);
+  if(tab==='financials') renderDealFullFinancials(id);
+  if(tab==='machines')   renderDealFullMachines(id);
+}
+
+function openEditDeal() { openModal(); }
+
+function renderDealFullActivity(id) {
+  const deal = DEALS_FULL.find(d=>d.id===id)||DEALS_FULL[0];
+  const acts = ACTIVITY_LOG[deal.account]||ACTIVITY_LOG.A1;
+  const actTypeColor={call:'#2C7A4B',email:'#185FA5',inspeq:'#6B3B9A',deal:'#9D4A00',visit:'#8B5A00',note:'#5f5e5a',job:'#093B26',marketplace:'#185FA5'};
+  const actTypeBg={call:'#E8F5EE',email:'#E6F1FB',inspeq:'#EEEDFE',deal:'#FEF3E2',visit:'#FEF3E2',note:'#F1EFE8',job:'#E1F5EE',marketplace:'#E6F1FB'};
+  const actTypeLabel={call:'Call',email:'Email',inspeq:'Inspeq',deal:'Deal Update',visit:'Site Visit',note:'Note',job:'Service Job',marketplace:'Marketplace'};
+  document.getElementById('dd-activity').innerHTML = `
+    <div style="max-width:760px">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:18px">
+        <h2 style="font-size:15px;font-weight:600">Activity Timeline</h2>
+        <div style="display:flex;gap:6px">
+          <button class="btn" style="height:30px;font-size:12px">📞 Log Call</button>
+          <button class="btn" style="height:30px;font-size:12px">✉️ Log Email</button>
+          <button class="btn btn-primary" style="height:30px;font-size:12px">📝 Add Note</button>
+        </div>
+      </div>
+      ${acts.map((a,i)=>`
+        <div style="display:flex;gap:13px;margin-bottom:0">
+          <div style="display:flex;flex-direction:column;align-items:center;width:34px;flex-shrink:0">
+            <div style="width:30px;height:30px;border-radius:50%;background:${actTypeBg[a.type]||'var(--bg)'};display:flex;align-items:center;justify-content:center;font-size:13px;border:1px solid var(--border)">${a.icon}</div>
+            ${i<acts.length-1?`<div style="width:1px;flex:1;background:var(--border);min-height:14px;margin:3px 0"></div>`:''}
+          </div>
+          <div style="flex:1;padding-bottom:12px">
+            <div style="display:flex;align-items:baseline;gap:7px;margin-bottom:3px;flex-wrap:wrap">
+              <span style="font-size:11px;font-weight:600;padding:2px 7px;border-radius:20px;background:${actTypeBg[a.type]||'var(--bg)'};color:${actTypeColor[a.type]||'var(--text3)'}">${actTypeLabel[a.type]||a.type}</span>
+              <span style="font-size:11px;color:var(--text3)">${a.time} · ${a.user}</span>
+            </div>
+            <div style="font-size:13px;color:var(--text);line-height:1.5;margin-bottom:3px">${a.text}</div>
+            ${a.detail?`<div style="font-size:11.5px;color:var(--text3);background:var(--surface2);border:1px solid var(--border);border-radius:6px;padding:6px 10px">${a.detail}</div>`:''}
+          </div>
+        </div>`).join('')}
+    </div>`;
+}
+
+function renderDealDocs(id) {
+  const deal = DEALS_FULL.find(d=>d.id===id)||DEALS_FULL[0];
+  const statusIcon={done:'✓',pending:'○',partial:'◐'};
+  const statusColor={done:'#3B6D11',pending:'var(--text3)',partial:'var(--amber)'};
+  const statusBg={done:'#EAF3DE',pending:'var(--bg)',partial:'var(--amber-bg)'};
+  document.getElementById('dd-docs').innerHTML = `
+    <div style="max-width:700px">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:18px">
+        <h2 style="font-size:15px;font-weight:600">Document Checklist</h2>
+        <button class="btn btn-primary" style="height:30px;font-size:12px">Upload Document</button>
+      </div>
+      <div style="display:flex;flex-direction:column;gap:8px">
+        ${deal.docs.map(d=>`
+          <div style="display:flex;align-items:center;gap:12px;padding:13px 16px;border:1px solid var(--border);border-radius:var(--radius);background:var(--surface)">
+            <div style="width:32px;height:32px;border-radius:50%;background:${statusBg[d.status]};display:flex;align-items:center;justify-content:center;font-size:13px;font-weight:700;color:${statusColor[d.status]};flex-shrink:0">${statusIcon[d.status]}</div>
+            <div style="flex:1">
+              <div style="font-size:13.5px;font-weight:500">${d.name}</div>
+              <div style="font-size:11.5px;color:${statusColor[d.status]};font-weight:500">${d.status==='done'?'Received & filed':d.status==='partial'?'Partially complete — action needed':'Awaiting receipt'}</div>
+            </div>
+            <button class="btn" style="height:28px;font-size:11.5px;padding:0 10px">${d.status==='done'?'View':'Upload'}</button>
+          </div>`).join('')}
+      </div>
+    </div>`;
+}
+
+function renderDealApprovals(id) {
+  const deal = DEALS_FULL.find(d=>d.id===id)||DEALS_FULL[0];
+  document.getElementById('dd-approvals').innerHTML = `
+    <div style="max-width:700px">
+      <h2 style="font-size:15px;font-weight:600;margin-bottom:18px">Approval Status</h2>
+      ${deal.approvalStatus==='Pending approval'?`
+        <div style="background:var(--amber-bg);border:1px solid rgba(186,117,23,0.25);border-radius:var(--radius-lg);padding:20px 24px;margin-bottom:20px">
+          <div style="font-size:15px;font-weight:600;color:var(--amber);margin-bottom:6px">⏳ Approval Required</div>
+          <div style="font-size:13.5px;color:var(--text2);line-height:1.6;margin-bottom:14px">Gross margin (${deal.grossMargin}%) is below the 20% threshold for ${deal.application}. Operations Director approval is required before this deal can advance.</div>
+          <div style="display:flex;gap:8px">
+            <button class="btn btn-primary" style="height:34px">Request Approval →</button>
+            <button class="btn" style="height:34px">Add Justification Note</button>
+          </div>
+        </div>
+        <div class="dash-card" style="padding:16px">
+          <div style="font-size:13px;font-weight:600;margin-bottom:12px">Approval Chain</div>
+          <div style="display:flex;flex-direction:column;gap:10px">
+            ${[{level:'Sales Manager',user:'James R.',status:'Approved',date:'Oct 15, 2025'},{level:'Operations Director',user:'Pending assignment',status:'Pending',date:'—'}].map(a=>`
+              <div style="display:flex;align-items:center;gap:12px;padding:11px 14px;border:1px solid var(--border);border-radius:var(--radius)">
+                <div style="width:8px;height:8px;border-radius:50%;background:${a.status==='Approved'?'var(--accent2)':'var(--amber)'};flex-shrink:0"></div>
+                <div style="flex:1"><div style="font-size:13px;font-weight:500">${a.level}</div><div style="font-size:12px;color:var(--text3)">${a.user}</div></div>
+                <div style="text-align:right">
+                  <span style="font-size:11.5px;padding:2px 9px;border-radius:20px;background:${a.status==='Approved'?'#EAF3DE':'var(--amber-bg)'};color:${a.status==='Approved'?'#3B6D11':'var(--amber)'};font-weight:500">${a.status}</span>
+                  <div style="font-size:11px;color:var(--text3);margin-top:2px">${a.date}</div>
+                </div>
+              </div>`).join('')}
+          </div>
+        </div>`:`
+        <div style="background:#EAF3DE;border:1px solid rgba(44,122,75,0.2);border-radius:var(--radius-lg);padding:20px 24px">
+          <div style="font-size:15px;font-weight:600;color:#3B6D11;margin-bottom:4px">✓ No Approval Required</div>
+          <div style="font-size:13px;color:var(--text2);margin-top:6px">Gross margin (${deal.grossMargin}%) meets or exceeds the threshold. This deal can proceed without additional approval.</div>
+        </div>`}
+    </div>`;
+}
+
+function renderDealFullFinancials(id) {
+  const deal = DEALS_FULL.find(d=>d.id===id)||DEALS_FULL[0];
+  const netVal = deal.dealValue-(deal.tradeInAllowance||0);
+  const grossMarginVal = netVal - deal.cogs;
+  const weightedVal = Math.round(netVal*deal.probability/100);
+  const marginColor = deal.grossMargin<18?'var(--red)':deal.grossMargin<20?'var(--amber)':'var(--accent2)';
+  document.getElementById('dd-financials').innerHTML = `
+    <div style="max-width:800px">
+      <h2 style="font-size:15px;font-weight:600;margin-bottom:18px">Financials &amp; Margins</h2>
+      <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin-bottom:20px">
+        ${[
+          {l:'Total Deal Value',v:'$'+deal.dealValue.toLocaleString()},
+          {l:'Net Deal Value',v:'$'+netVal.toLocaleString()},
+          {l:'Gross Margin',v:deal.grossMargin+'%',c:marginColor},
+          {l:'Gross Margin $',v:'$'+grossMarginVal.toLocaleString(),c:marginColor},
+          {l:'Weighted Value',v:'$'+weightedVal.toLocaleString()},
+          {l:'Probability',v:deal.probability+'%',c:'var(--blue)'},
+        ].map(k=>`<div class="kpi-card" style="padding:14px 16px"><div class="kpi-label">${k.l}</div><div style="font-size:20px;font-weight:600;letter-spacing:-0.3px;color:${k.c||'var(--text)'};font-family:'DM Mono',monospace">${k.v}</div></div>`).join('')}
+      </div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:18px">
+        <div class="dash-card" style="padding:16px 20px">
+          <div style="font-size:13px;font-weight:600;margin-bottom:12px">Deal Breakdown</div>
+          ${[
+            ['Machine / Asset Value','$'+deal.dealValue.toLocaleString(),'var(--text)'],
+            deal.tradeInAllowance?['Trade-in Allowance','($'+deal.tradeInAllowance.toLocaleString()+')','var(--amber)']:null,
+            ['Net Deal Value','$'+netVal.toLocaleString(),'var(--text)',true],
+            ['Cost of Goods (COGS)','($'+deal.cogs.toLocaleString()+')','var(--text2)'],
+            ['Gross Margin','$'+grossMarginVal.toLocaleString()+' ('+deal.grossMargin+'%)',marginColor,true],
+          ].filter(Boolean).map(([k,v,c,bold])=>`
+            <div style="display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px solid var(--border)${bold?';font-weight:600':''}">
+              <span style="color:${bold?'var(--text)':'var(--text2)'};font-size:13px">${k}</span>
+              <span style="font-family:'DM Mono',monospace;font-weight:${bold?700:500};color:${c};font-size:${bold?'14px':'13px'}">${v}</span>
+            </div>`).join('')}
+        </div>
+        <div class="dash-card" style="padding:16px 20px">
+          <div style="font-size:13px;font-weight:600;margin-bottom:12px">Financing Structure</div>
+          ${[
+            ['Type',deal.financing],
+            deal.term?['Term',deal.term+' months']:null,
+            deal.rate?['Interest Rate',deal.rate+'% per annum']:null,
+            deal.deposit?['Deposit','$'+deal.deposit.toLocaleString()]:null,
+            ['Monthly Payment (approx)',deal.term&&deal.rate?'$'+Math.round(netVal/deal.term).toLocaleString()+'/mo':'—'],
+          ].filter(Boolean).map(([k,v])=>`
+            <div style="display:flex;justify-content:space-between;padding:8px 0;border-bottom:1px solid var(--border);font-size:13px">
+              <span style="color:var(--text2)">${k}</span><span style="font-weight:500">${v}</span>
+            </div>`).join('')}
+        </div>
+      </div>
+    </div>`;
+}
+
+function renderDealFullMachines(id) {
+  const deal = DEALS_FULL.find(d=>d.id===id)||DEALS_FULL[0];
+  document.getElementById('dd-machines').innerHTML = `
+    <div style="max-width:860px">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:18px">
+        <h2 style="font-size:15px;font-weight:600">Machines &amp; Assets</h2>
+        <button class="btn btn-primary" style="height:30px;font-size:12px">+ Add Machine</button>
+      </div>
+      <div style="display:flex;flex-direction:column;gap:12px">
+        ${deal.machines.map(m => {
+          const isTradeIn = m.type.toLowerCase().includes('trade');
+          return `<div style="background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-lg);overflow:hidden;box-shadow:var(--shadow)">
+            <div style="height:3px;background:${isTradeIn?'var(--amber)':'var(--accent2)'}"></div>
+            <div style="padding:16px 20px;display:flex;gap:14px;align-items:flex-start">
+              <div style="width:52px;height:52px;background:${isTradeIn?'var(--amber-bg)':'var(--accent-bg)'};border-radius:var(--radius);display:flex;align-items:center;justify-content:center;flex-shrink:0;color:${isTradeIn?'var(--amber)':'var(--accent)'}">
+                <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M3 17h18M5 17V9l3-3h8l3 3v8"/><circle cx="7" cy="20" r="2"/><circle cx="17" cy="20" r="2"/></svg>
+              </div>
+              <div style="flex:1">
+                <div style="display:flex;align-items:center;gap:8px;margin-bottom:4px">
+                  <div style="font-weight:600;font-size:15px">${m.name}</div>
+                  <span style="font-size:11.5px;padding:2px 9px;border-radius:20px;background:${isTradeIn?'var(--amber-bg)':'var(--accent-bg)'};color:${isTradeIn?'var(--amber)':'var(--accent)'};">${m.type}</span>
+                </div>
+                <div style="font-size:12.5px;color:var(--text3);font-family:'DM Mono',monospace;margin-bottom:10px">${m.pin} · ${m.hours?m.hours.toLocaleString()+'h · Grade '+m.condition:'New machine — 0h'}</div>
+                <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+                  <span class="inspeq-status ${m.inspeq==='current'?'inspeq-current':m.inspeq==='pending'?'inspeq-pending':'inspeq-overdue'}" style="font-size:11px">${m.inspeq==='current'?'✓ Inspeq Current':m.inspeq==='pending'?'⏳ Inspection Pending':'⚠ Inspection Overdue'}</span>
+                  <button class="btn" style="height:26px;font-size:11.5px;padding:0 10px" onclick="openMachineDetail('${m.pin}')">View Machine →</button>
+                </div>
+              </div>
+              <div style="text-align:right;flex-shrink:0;min-width:100px">
+                <div style="font-size:18px;font-weight:700;font-family:'DM Mono',monospace;color:${isTradeIn?'var(--amber)':'var(--text)'}">${isTradeIn?'('+Math.abs(m.price).toLocaleString()+')':'$'+m.price.toLocaleString()}</div>
+                <div style="font-size:11.5px;color:var(--text3);margin-top:2px">${isTradeIn?'trade-in allowance':'sale price'}</div>
+              </div>
+            </div>
+          </div>`;
+        }).join('')}
+      </div>
+    </div>`;
+}
+
+// ── Wire deal table rows to openDealDetail ────────────────────────
+function patchDealTableRows() {
+  const dealIdMap = {
+    'CAT 320 Trade-In + New 336':'D1',
+    'Volvo EC220 Rental Contract':'D2',
+    'Komatsu Fleet Upgrade':'D3',
+    'JCB Auction Consignment':'D4',
+    'Deere 310L Finance Lease':'D5',
+    'Hitachi ZX210 PDI':'D6',
+  };
+  const tbody = document.querySelector('#page-deals .data-table tbody');
+  if(!tbody) return;
+  tbody.querySelectorAll('tr').forEach(row => {
+    const nameEl = row.querySelector('.deal-name');
+    if(!nameEl) return;
+    const text = nameEl.textContent.trim();
+    const did = Object.entries(dealIdMap).find(([k]) => text.includes(k.split(' ')[0]) && text.includes(k.split(' ').slice(-1)[0]));
+    if(did) {
+      row.style.cursor = 'pointer';
+      row.onclick = () => openDealDetail(did[1]);
+    }
+  });
+}
+
 // ═══════════════════════════════════════════════════════════════════
 // PIPELINE MODULE — COMPLETE DATA MODEL & LOGIC
 // ═══════════════════════════════════════════════════════════════════
@@ -6783,6 +7241,7 @@ document.addEventListener('DOMContentLoaded', () => {
   renderContactsTable();
   patchContactTableRows();
   setTimeout(patchMachinesPage, 200);
+  setTimeout(patchDealTableRows, 300);
 });
 setTimeout(() => {
   renderAccountsTable();
